@@ -9,10 +9,11 @@ Plugin importable : cherche un contact Teams/Graph, affiche sa photo sur la touc
    - Linux : `~/.config/opendeck/plugins/`
    - macOS : `~/Library/Application Support/opendeck/plugins/`
    - Flatpak : `~/.var/app/me.amankhanna.opendeck/config/opendeck/plugins/`
-2. Redemarre OpenDeck (ou reactive le plugin).
-3. **Node.js >= 22** requis (WebSocket natif pour le plugin + capture CDP).
+2. Dans le dossier du plugin : **`npm install`** (dependance `jimp` pour composer la pastille de presence). `node_modules` n'est pas versionne.
+3. Redemarre OpenDeck (ou reactive le plugin).
+4. **Node.js >= 22** requis (WebSocket natif pour le plugin + capture CDP).
 
-Aucune compilation. Dossier pret a l'emploi.
+Aucune compilation native.
 
 ## Usage
 
@@ -37,12 +38,23 @@ node lib/grab_tokens.mjs --port 9223 --clone-profile
 
 Ecrit `token.txt` + `skype_token.txt` dans le cwd. `--clone-profile` (Windows) copie cookies du profil Chrome habituel pour eviter un re-login.
 
-## Tokens (~1 h)
+## Presence (pastille sur la touche)
 
-| Source | `aud` attendu | Role |
-|---|---|---|
-| Graph / Substrate (Authorization) | `https://graph.microsoft.com` **ou** `https://outlook.office.com/search` | recherche |
-| Cookie `authtoken` | `https://api.spaces.skype.com` | photo `profilepicturev2` |
+Une pastille de couleur (coin bas-droite) reflete la presence Teams du contact :
+vert = disponible, rouge = occupe / ne pas deranger / en reunion, orange = absent,
+gris = hors ligne. Mise a jour par **polling toutes les 45 s** (UPS `getpresence`).
+
+- Source : `POST https://presence.teams.microsoft.com/v1/presence/getpresence`, corps `[{"mri":"8:orgid:<id>"}]`.
+- Token dedie `aud=https://presence.teams.microsoft.com` (capture auto via Chrome, dure ~20 h).
+- Aucun token presence -> pas de pastille, le reste fonctionne.
+
+## Tokens
+
+| Source | `aud` attendu | Role | Duree |
+|---|---|---|---|
+| Graph / Substrate (Authorization) | `https://graph.microsoft.com` **ou** `https://outlook.office.com/search` | recherche | ~1 h |
+| Cookie `authtoken` | `https://api.spaces.skype.com` | photo `profilepicturev2` | ~20 h |
+| Authorization (worker UPS) | `https://presence.teams.microsoft.com` | presence | ~20 h |
 
 ### Alternative manuelle (F12)
 

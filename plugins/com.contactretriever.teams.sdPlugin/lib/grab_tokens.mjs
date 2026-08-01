@@ -18,6 +18,7 @@ const WANTED = {
 	"https://graph.microsoft.com": { field: "graphToken", label: "recherche (Graph)" },
 	"https://outlook.office.com/search": { field: "graphToken", label: "recherche (Substrate)" },
 	"https://api.spaces.skype.com": { field: "skypeToken", label: "photos (Teams)" },
+	"https://presence.teams.microsoft.com": { field: "presenceToken", label: "presence (UPS)" },
 };
 
 function profileDir() {
@@ -208,7 +209,7 @@ class CDP {
 
 function remember(token, found, origin, onLog) {
 	token = cleanToken(token);
-	const aud = jwtAud(token);
+	const aud = jwtAud(token).replace(/\/+$/, "");
 	if (!(aud in WANTED) || aud in found) return;
 	found[aud] = token;
 	const { label } = WANTED[aud];
@@ -235,16 +236,21 @@ function scanHeaders(headers, found, origin, onLog) {
 	}
 }
 
+function foundFields(found) {
+	return new Set(Object.keys(found).map((a) => WANTED[a].field));
+}
+
 function haveAll(found) {
-	const fields = new Set(Object.keys(found).map((a) => WANTED[a].field));
-	return fields.has("graphToken") && fields.has("skypeToken");
+	const fields = foundFields(found);
+	return fields.has("graphToken") && fields.has("skypeToken") && fields.has("presenceToken");
 }
 
 function missingLabels(found) {
-	const fields = new Set(Object.keys(found).map((a) => WANTED[a].field));
+	const fields = foundFields(found);
 	const todo = [];
 	if (!fields.has("graphToken")) todo.push("recherche");
 	if (!fields.has("skypeToken")) todo.push("photos");
+	if (!fields.has("presenceToken")) todo.push("presence");
 	return todo;
 }
 
@@ -259,11 +265,14 @@ function advice(pageUrl, found) {
 	if (todo.includes("recherche")) {
 		return "Teams charge -> TAPE UN NOM dans la barre de recherche Teams";
 	}
+	if (todo === "presence") {
+		return "Teams charge -> ouvre la liste de Chats (declenche la presence)";
+	}
 	return `Teams charge, capture en cours (manque : ${todo})`;
 }
 
 function toSettings(found) {
-	const out = { graphToken: "", skypeToken: "" };
+	const out = { graphToken: "", skypeToken: "", presenceToken: "" };
 	let graphAud = "";
 	for (const [aud, token] of Object.entries(found)) {
 		const { field } = WANTED[aud];
@@ -303,6 +312,9 @@ export async function captureTokens(opts = {}) {
 	let pageUrl = "";
 	const deadline = Date.now() + timeout * 1000;
 	let lastPoll = 0;
+	// Presence traffic runs in a Teams web worker whose UPS subscribe fires once,
+	// at page load. Reload each Teams page (once) so we catch that startup request.
+	const reloaded = new Set();
 
 	try {
 		while (Date.now() < deadline && !haveAll(found)) {
@@ -325,7 +337,19 @@ export async function captureTokens(opts = {}) {
 
 			if (method === "Target.attachedToTarget") {
 				const session = params.sessionId || msg.sessionId;
+				const info = params.targetInfo || {};
 				cdp.send("Network.enable", {}, session);
+				// cascade auto-attach so this target's workers attach too
+				cdp.send(
+					"Target.setAutoAttach",
+					{ autoAttach: true, waitForDebuggerOnStart: false, flatten: true },
+					session,
+				);
+				if (info.type === "page" && (info.url || "").includes("teams.microsoft.com") && !reloaded.has(session)) {
+					reloaded.add(session);
+					cdp.send("Page.enable", {}, session);
+					cdp.send("Page.reload", { ignoreCache: false }, session);
+				}
 			} else if (method === "Network.requestWillBeSent") {
 				scanHeaders(params.request?.headers, found, "en-tete Authorization", onLog);
 			} else if (method === "Network.requestWillBeSentExtraInfo") {
@@ -365,7 +389,7 @@ async function main() {
 	const clone = args.includes("--clone-profile");
 
 	try {
-		const { graphToken, skypeToken } = await captureTokens({
+		const { graphToken, skypeToken, presenceToken } = await captureTokens({
 			port,
 			timeout,
 			cloneProfile: clone,
@@ -385,7 +409,13 @@ async function main() {
 		} else {
 			console.log("  /!\\ skype_token.txt manquant");
 		}
-		process.exit(graphToken && skypeToken ? 0 : 1);
+		if (presenceToken) {
+			await writeFile("presence_token.txt", presenceToken + "\n", "utf8");
+			console.log(`  presence_token.txt <- presence   (${jwtExpLabel(presenceToken)})`);
+		} else {
+			console.log("  /!\\ presence_token.txt manquant");
+		}
+		process.exit(graphToken && skypeToken && presenceToken ? 0 : 1);
 	} catch (e) {
 		console.error(e.message || e);
 		process.exit(1);

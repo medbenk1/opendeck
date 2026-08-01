@@ -4,6 +4,8 @@ export const GRAPH = "https://graph.microsoft.com/v1.0";
 export const SUBSTRATE = "https://substrate.office.com/search/api/v1/suggestions";
 export const TEAMS_PROFILE_BASE = "https://teams.microsoft.com/api/mt/part";
 export const SKYPE_AUD = "https://api.spaces.skype.com";
+export const PRESENCE_URL = "https://presence.teams.microsoft.com/v1/presence/getpresence";
+export const PRESENCE_AUD = "https://presence.teams.microsoft.com";
 
 export function cleanToken(tok) {
 	if (!tok) return "";
@@ -65,16 +67,20 @@ export function detectBackend(token) {
 export function describeTokens(globalSettings = {}) {
 	const graphToken = cleanToken(globalSettings.graphToken);
 	const skypeToken = cleanToken(globalSettings.skypeToken);
+	const presenceToken = cleanToken(globalSettings.presenceToken);
 	const backend = graphToken ? detectBackend(graphToken) : "none";
 	return {
 		graphToken,
 		skypeToken,
+		presenceToken,
 		backend,
 		graphAud: graphToken ? tokenAudience(graphToken) : "",
 		graphExp: graphToken ? tokenExpirationDetails(graphToken) : "",
 		skypeAud: skypeToken ? tokenAudience(skypeToken) : "",
 		skypeExp: skypeToken ? tokenExpirationDetails(skypeToken) : "",
+		presenceExp: presenceToken ? tokenExpirationDetails(presenceToken) : "",
 		hasSkype: Boolean(skypeToken && String(tokenClaim(skypeToken, "aud", "")).includes(SKYPE_AUD)),
+		hasPresence: Boolean(presenceToken && String(tokenClaim(presenceToken, "aud", "")).includes(PRESENCE_AUD)),
 		teamsPart: globalSettings.teamsPart || "emea-02",
 		doubleClickMs: Number(globalSettings.doubleClickMs) > 0 ? Number(globalSettings.doubleClickMs) : 400,
 	};

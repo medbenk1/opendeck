@@ -292,6 +292,12 @@
 						} else {
 							lines.push("Photos: pas de token skype (fallback Graph si possible)");
 						}
+						if (p.hasPresence) {
+							lines.push("Presence: UPS OK");
+							if (p.presenceExp) lines.push(p.presenceExp);
+						} else {
+							lines.push("Presence: pas de token (capture via Chrome)");
+						}
 						if (p.teamsPart) lines.push(`TEAMS_PART=${p.teamsPart}`);
 						setStatus(document.getElementById("tokenStatus"), lines.join("\n"), p.hasGraphToken ? "ok" : "warn");
 						if (p.grabRunning) setGrabRunning(true);

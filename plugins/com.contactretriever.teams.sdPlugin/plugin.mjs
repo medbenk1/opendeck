@@ -13,6 +13,8 @@ import { searchContacts, emailOf } from "./lib/search.mjs";
 import { downloadPhoto } from "./lib/photos.mjs";
 import { describeTokens, cleanToken } from "./lib/tokens.mjs";
 import { captureTokens } from "./lib/grab_tokens.mjs";
+import { getPresences } from "./lib/presence.mjs";
+import { badgeImage, badgeTile } from "./lib/badge.mjs";
 
 const ACTION_UUID = "com.contactretriever.teams.contact";
 
@@ -48,6 +50,15 @@ const pendingClicks = new Map();
 const instanceCache = new Map();
 /** @type {AbortController | null} */
 let grabAbort = null;
+
+/** Presence polling state. */
+const PRESENCE_INTERVAL_MS = 45000;
+/** Contexts currently visible that carry a contact (mri). */
+const activeContexts = new Set();
+/** context -> last normalized presence. */
+const presenceState = new Map();
+/** @type {NodeJS.Timeout | null} */
+let presenceTimer = null;
 
 function send(msg) {
 	if (ws.readyState === WS.OPEN) ws.send(JSON.stringify(msg));
@@ -134,6 +145,8 @@ async function refreshPhoto(context, settings) {
 	const next = { ...settings, photoDataUrl: photo.dataUrl, photoSource: photo.source };
 	setSettings(context, next);
 	setImage(context, photo.dataUrl);
+	const presence = presenceState.get(context);
+	if (presence) await applyPresence(context, presence, true);
 	return next;
 }
 
@@ -149,6 +162,10 @@ async function handleSelectContact(context, person) {
 	};
 	setSettings(context, settings);
 	setTitle(context, shortTitle(settings.displayName, settings.mail));
+	if (contextMri(context)) {
+		activeContexts.add(context);
+		startPresencePolling();
+	}
 
 	try {
 		const withPhoto = await refreshPhoto(context, settings);
@@ -253,6 +270,65 @@ function normalizeContext(ctx) {
 	return String(ctx);
 }
 
+function contextMri(context) {
+	const s = instanceCache.get(context) || {};
+	return s.mri || (s.id ? `8:orgid:${s.id}` : "");
+}
+
+async function applyPresence(context, presence, force = false) {
+	const prev = presenceState.get(context);
+	presenceState.set(context, presence);
+	if (!force && prev && prev.availability === presence.availability) return;
+	const settings = instanceCache.get(context) || {};
+	try {
+		const image = settings.photoDataUrl
+			? await badgeImage(settings.photoDataUrl, presence.availability)
+			: await badgeTile(presence.availability);
+		setImage(context, image);
+	} catch (e) {
+		log(`Presence render ${String(context).slice(-14)}: ${e.message}`);
+	}
+}
+
+async function pollPresence() {
+	if (activeContexts.size === 0) return;
+	const info = describeTokens(globalSettings);
+	if (!info.presenceToken || !info.hasPresence) return;
+
+	/** @type {Map<string, string[]>} mri -> contexts */
+	const targets = new Map();
+	for (const context of activeContexts) {
+		const mri = contextMri(context);
+		if (!mri) continue;
+		if (!targets.has(mri)) targets.set(mri, []);
+		targets.get(mri).push(context);
+	}
+	if (targets.size === 0) return;
+
+	try {
+		const map = await getPresences(info.presenceToken, [...targets.keys()]);
+		for (const [mri, contexts] of targets) {
+			const presence = map.get(mri);
+			if (!presence) continue;
+			for (const context of contexts) await applyPresence(context, presence);
+		}
+	} catch (e) {
+		log(`Presence poll: ${(e.message || String(e)).split("\n")[0]}`);
+	}
+}
+
+function startPresencePolling() {
+	if (presenceTimer) return;
+	presenceTimer = setInterval(pollPresence, PRESENCE_INTERVAL_MS);
+	pollPresence();
+}
+
+function stopPresencePolling() {
+	if (!presenceTimer) return;
+	clearInterval(presenceTimer);
+	presenceTimer = null;
+}
+
 function pushTokenStatus(context) {
 	const info = describeTokens(globalSettings);
 	sendToPi(context, {
@@ -263,6 +339,8 @@ function pushTokenStatus(context) {
 		skypeAud: info.skypeAud,
 		skypeExp: info.skypeExp,
 		hasSkype: info.hasSkype,
+		hasPresence: info.hasPresence,
+		presenceExp: info.presenceExp,
 		teamsPart: info.teamsPart,
 		doubleClickMs: info.doubleClickMs,
 		hasGraphToken: Boolean(info.graphToken),
@@ -304,6 +382,10 @@ async function onMessage(raw) {
 			if (context) {
 				instanceCache.set(context, settings);
 				applyContactVisual(context, settings);
+				if (contextMri(context)) {
+					activeContexts.add(context);
+					startPresencePolling();
+				}
 			}
 			break;
 		}
@@ -314,6 +396,9 @@ async function onMessage(raw) {
 					clearTimeout(pending.timer);
 					pendingClicks.delete(context);
 				}
+				activeContexts.delete(context);
+				presenceState.delete(context);
+				if (activeContexts.size === 0) stopPresencePolling();
 			}
 			break;
 		}
@@ -342,6 +427,7 @@ async function onMessage(raw) {
 				globalSettings = {
 					graphToken: cleanToken(payload.graphToken),
 					skypeToken: cleanToken(payload.skypeToken),
+					presenceToken: cleanToken(payload.presenceToken) || globalSettings.presenceToken || "",
 					teamsPart: (payload.teamsPart || "emea-02").trim() || "emea-02",
 					doubleClickMs: Number(payload.doubleClickMs) > 0 ? Number(payload.doubleClickMs) : 400,
 					authMode: payload.authMode === "manual" ? "manual" : "chrome",
@@ -391,6 +477,7 @@ async function onMessage(raw) {
 						...globalSettings,
 						graphToken: result.graphToken || globalSettings.graphToken || "",
 						skypeToken: result.skypeToken || globalSettings.skypeToken || "",
+						presenceToken: result.presenceToken || globalSettings.presenceToken || "",
 						authMode: "chrome",
 					};
 					send({ event: "setGlobalSettings", context: pluginUUID, payload: globalSettings });
@@ -398,6 +485,7 @@ async function onMessage(raw) {
 					const missing = [];
 					if (!result.graphToken) missing.push("recherche");
 					if (!result.skypeToken) missing.push("photos");
+					if (!result.presenceToken) missing.push("presence");
 					sendToPi(context, {
 						event: "grabDone",
 						ok: missing.length === 0,
