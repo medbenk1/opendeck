@@ -12,6 +12,7 @@
 import { searchContacts, emailOf } from "./lib/search.mjs";
 import { downloadPhoto } from "./lib/photos.mjs";
 import { describeTokens, cleanToken } from "./lib/tokens.mjs";
+import { captureTokens } from "./lib/grab_tokens.mjs";
 
 const ACTION_UUID = "com.contactretriever.teams.contact";
 
@@ -45,6 +46,8 @@ let globalSettings = {};
 const pendingClicks = new Map();
 /** Keep last instance settings for click handling if payload is thin. */
 const instanceCache = new Map();
+/** @type {AbortController | null} */
+let grabAbort = null;
 
 function send(msg) {
 	if (ws.readyState === WS.OPEN) ws.send(JSON.stringify(msg));
@@ -263,6 +266,8 @@ function pushTokenStatus(context) {
 		teamsPart: info.teamsPart,
 		doubleClickMs: info.doubleClickMs,
 		hasGraphToken: Boolean(info.graphToken),
+		authMode: globalSettings.authMode === "manual" ? "manual" : "chrome",
+		grabRunning: Boolean(grabAbort),
 	});
 }
 
@@ -339,6 +344,7 @@ async function onMessage(raw) {
 					skypeToken: cleanToken(payload.skypeToken),
 					teamsPart: (payload.teamsPart || "emea-02").trim() || "emea-02",
 					doubleClickMs: Number(payload.doubleClickMs) > 0 ? Number(payload.doubleClickMs) : 400,
+					authMode: payload.authMode === "manual" ? "manual" : "chrome",
 				};
 				send({ event: "setGlobalSettings", context: pluginUUID, payload: globalSettings });
 				pushTokenStatus(context);
@@ -346,11 +352,84 @@ async function onMessage(raw) {
 				break;
 			}
 
+			if (type === "grabTokens") {
+				if (grabAbort) {
+					sendToPi(context, {
+						event: "grabProgress",
+						ok: false,
+						message: "Capture deja en cours.",
+					});
+					break;
+				}
+				grabAbort = new AbortController();
+				const timeout = Number(payload.timeout) > 0 ? Number(payload.timeout) : 180;
+				const port = Number(payload.port) > 0 ? Number(payload.port) : 9222;
+				const cloneProfile = Boolean(payload.cloneProfile);
+				sendToPi(context, {
+					event: "grabProgress",
+					ok: true,
+					running: true,
+					message: "Demarrage Chrome / CDP…",
+				});
+				try {
+					const result = await captureTokens({
+						port,
+						timeout,
+						cloneProfile,
+						signal: grabAbort.signal,
+						onLog: (message) => {
+							log(message);
+							sendToPi(context, {
+								event: "grabProgress",
+								ok: true,
+								running: true,
+								message,
+							});
+						},
+					});
+					globalSettings = {
+						...globalSettings,
+						graphToken: result.graphToken || globalSettings.graphToken || "",
+						skypeToken: result.skypeToken || globalSettings.skypeToken || "",
+						authMode: "chrome",
+					};
+					send({ event: "setGlobalSettings", context: pluginUUID, payload: globalSettings });
+					pushTokenStatus(context);
+					const missing = [];
+					if (!result.graphToken) missing.push("recherche");
+					if (!result.skypeToken) missing.push("photos");
+					sendToPi(context, {
+						event: "grabDone",
+						ok: missing.length === 0,
+						graphToken: result.graphToken || "",
+						skypeToken: result.skypeToken || "",
+						message:
+							missing.length === 0
+								? "Tokens captures et enregistres."
+								: `Partiel — manquant : ${missing.join(", ")}`,
+					});
+				} catch (e) {
+					log(`Grab error: ${e.message}`);
+					sendToPi(context, {
+						event: "grabDone",
+						ok: false,
+						error: e.message || String(e),
+					});
+				} finally {
+					grabAbort = null;
+				}
+				break;
+			}
+
+			if (type === "cancelGrabTokens") {
+				if (grabAbort) grabAbort.abort();
+				break;
+			}
+
 			if (type === "getTokenStatus") {
 				pushTokenStatus(context);
 				break;
 			}
-
 			if (type === "search") {
 				await handleSearch(context, payload.query || "");
 				break;

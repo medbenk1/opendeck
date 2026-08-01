@@ -9,7 +9,7 @@
 	"Category": "Teams Contact",
 	"CategoryIcon": "imgs/category",
 	"Nodejs": {
-		"Version": "20"
+		"Version": "22"
 	},
 	"OS": [
 		{ "Platform": "mac", "MinimumVersion": "10.11" },

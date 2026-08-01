@@ -10,50 +10,59 @@ Plugin importable : cherche un contact Teams/Graph, affiche sa photo sur la touc
    - macOS : `~/Library/Application Support/opendeck/plugins/`
    - Flatpak : `~/.var/app/me.amankhanna.opendeck/config/opendeck/plugins/`
 2. Redemarre OpenDeck (ou reactive le plugin).
-3. **Node.js >= 20** requis (WebSocket natif : Node 22+ recommande ; sinon `npm install` dans le dossier).
+3. **Node.js >= 22** requis (WebSocket natif pour le plugin + capture CDP).
 
 Aucune compilation. Dossier pret a l'emploi.
 
 ## Usage
 
 1. Glisse l'action **Teams Contact** sur une touche.
-2. Dans le property inspector :
-   - colle le **token recherche** (Graph ou Substrate)
-   - colle le **token photo** Skype (`aud = https://api.spaces.skype.com`)
-   - **Enregistrer tokens** (partages entre toutes les touches du plugin)
-3. Cherche un nom, clique un resultat → photo assignee a la touche.
-4. **Clic** → `msteams://…/l/chat/0/0?users=…`
-5. **Double clic** (~400 ms) → `msteams://…/l/call/0/0?users=…` (audio)
+2. Tokens (property inspector) — **voie par defaut** :
+   - clique **Capturer via Chrome**
+   - une fenetre Chrome (profil dedie) ouvre Teams ; connecte-toi si demande
+   - tape un nom dans la barre de recherche Teams si le statut le demande
+   - les 2 JWT sont enregistres automatiquement (~1 h)
+3. Alternative : ouvre **Saisie manuelle** et colle les 2 tokens (procedure F12 ci-dessous).
+4. Cherche un nom, clique un resultat → photo assignee a la touche.
+5. **Clic** → chat · **Double clic** (~400 ms) → appel audio.
+
+### Capture CLI (meme logique CDP)
+
+```bash
+cd plugins/com.contactretriever.teams.sdPlugin
+node lib/grab_tokens.mjs
+node lib/grab_tokens.mjs --timeout 300
+node lib/grab_tokens.mjs --port 9223 --clone-profile
+```
+
+Ecrit `token.txt` + `skype_token.txt` dans le cwd. `--clone-profile` (Windows) copie cookies du profil Chrome habituel pour eviter un re-login.
 
 ## Tokens (~1 h)
 
-| Champ PI | `aud` attendu | Role |
+| Source | `aud` attendu | Role |
 |---|---|---|
-| Token recherche | `https://graph.microsoft.com` **ou** `https://outlook.office.com/search` | recherche contacts |
-| Token photo | `https://api.spaces.skype.com` | photo via `profilepicturev2` |
+| Graph / Substrate (Authorization) | `https://graph.microsoft.com` **ou** `https://outlook.office.com/search` | recherche |
+| Cookie `authtoken` | `https://api.spaces.skype.com` | photo `profilepicturev2` |
 
-Procedure (Teams web, Chrome) :
+### Alternative manuelle (F12)
 
 1. Ouvre https://teams.microsoft.com , `F12` → Network, Preserve log.
-2. **Recherche** :
-   - Graph : filtre `graph.microsoft.com` → header `Authorization` → JWT apres `Bearer `
-   - Substrate (souvent plus simple) : tape un nom dans la barre de recherche Teams → filtre `substrate.office.com` → meme header
+2. **Recherche** : filtre Graph ou `substrate.office.com` → header `Authorization` → JWT apres `Bearer `
 3. **Photo** : filtre `profilepicturev2` → Cookies → `authtoken` → JWT entre `Bearer=` et `&origin`
 4. Verifie `aud` sur https://jwt.ms
 
-`TEAMS_PART` (defaut `emea-02`) = segment vu dans l'URL `…/api/mt/part/<part>/…`.
+`TEAMS_PART` (defaut `emea-02`) = segment dans `…/api/mt/part/<part>/…`.
 
 ## Compatibilite recherche
 
-Le plugin detecte l'audience du token :
-
-- Graph → `/me/people`, puis annuaire `/users` si vide
-- Substrate (Powerbar Teams) → suggestions People
+- Graph → `/me/people`, puis `/users` si vide
+- Substrate (Powerbar) → suggestions People
 - Audience inconnue → tente Graph puis Substrate
 
-Photos : Teams `profilepicturev2` si token Skype present, sinon Graph `/photo/$value`.
+Photos : Teams `profilepicturev2` si token Skype, sinon Graph `/photo/$value`.
 
 ## Securite
 
-Les tokens sont des secrets de session. Stockes en clair dans les global settings OpenDeck
-(`settings/com.contactretriever.teams.sdPlugin.json`). Ne pas committer. Ils expirent ~1 h.
+Tokens = secrets de session. Stockes en clair dans les global settings OpenDeck.
+Profil Chrome dedie : `%LOCALAPPDATA%/contact-retriever/chrome-profile` (Windows).
+Ne pas committer. Expiration ~1 h.

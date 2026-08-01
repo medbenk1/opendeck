@@ -76,18 +76,40 @@
 	<body>
 		<div class="sdpi-heading">Tokens (globaux)</div>
 		<div class="hint">
-			Valables ~1 h. Graph/Substrate = recherche. Skype (aud=api.spaces.skype.com) = photos Teams.
-			Voir README du plugin pour la procedure F12.
+			Voie par defaut : Chrome ouvre Teams, le plugin ecoute le trafic (CDP) et recupere les 2 JWT.
+			Valables ~1 h. Si besoin : saisie manuelle ci-dessous.
 		</div>
 
 		<div class="sdpi-item">
-			<div class="sdpi-item-label">Token recherche</div>
-			<textarea id="graphToken" class="sdpi-item-value" placeholder="JWT Graph ou Substrate (Powerbar)"></textarea>
+			<div class="sdpi-item-label">Chrome</div>
+			<button class="sdpi-item-value" id="grabTokens" type="button">Capturer via Chrome</button>
 		</div>
 		<div class="sdpi-item">
-			<div class="sdpi-item-label">Token photo</div>
-			<textarea id="skypeToken" class="sdpi-item-value" placeholder="JWT skype (cookie authtoken)"></textarea>
+			<div class="sdpi-item-label"></div>
+			<button class="sdpi-item-value" id="cancelGrab" type="button" style="display: none">Annuler capture</button>
 		</div>
+		<div id="grabStatus" class="status" style="display: none"></div>
+		<div id="tokenStatus" class="status">Tokens non charges.</div>
+
+		<details id="manualTokens" style="margin: 0 8px 10px">
+			<summary style="cursor: pointer; color: #bdbdbd; font-size: 9pt; margin-bottom: 6px">
+				Saisie manuelle (alternative)
+			</summary>
+			<div class="hint">Colle les JWT depuis F12 / Network. Voir README.</div>
+			<div class="sdpi-item">
+				<div class="sdpi-item-label">Token recherche</div>
+				<textarea id="graphToken" class="sdpi-item-value" placeholder="JWT Graph ou Substrate (Powerbar)"></textarea>
+			</div>
+			<div class="sdpi-item">
+				<div class="sdpi-item-label">Token photo</div>
+				<textarea id="skypeToken" class="sdpi-item-value" placeholder="JWT skype (cookie authtoken)"></textarea>
+			</div>
+			<div class="sdpi-item">
+				<div class="sdpi-item-label"></div>
+				<button class="sdpi-item-value" id="saveTokens" type="button">Enregistrer tokens</button>
+			</div>
+		</details>
+
 		<div class="sdpi-item">
 			<div class="sdpi-item-label">TEAMS_PART</div>
 			<input id="teamsPart" class="sdpi-item-value" placeholder="emea-02" value="emea-02" />
@@ -96,11 +118,6 @@
 			<div class="sdpi-item-label">Double-clic (ms)</div>
 			<input id="doubleClickMs" class="sdpi-item-value" type="number" min="200" max="1000" value="400" />
 		</div>
-		<div class="sdpi-item">
-			<div class="sdpi-item-label"></div>
-			<button class="sdpi-item-value" id="saveTokens" type="button">Enregistrer tokens</button>
-		</div>
-		<div id="tokenStatus" class="status">Tokens non charges.</div>
 
 		<div class="sdpi-heading">Contact</div>
 		<div id="selected" class="selected">Aucun contact selectionne.</div>
@@ -190,13 +207,30 @@
 					.replace(/"/g, "&quot;");
 			}
 
+			function setGrabRunning(running) {
+				document.getElementById("grabTokens").disabled = running;
+				document.getElementById("cancelGrab").style.display = running ? "block" : "none";
+			}
+
 			function saveTokens() {
 				sendToPlugin({
 					event: "saveGlobal",
+					authMode: "manual",
 					graphToken: document.getElementById("graphToken").value,
 					skypeToken: document.getElementById("skypeToken").value,
 					teamsPart: document.getElementById("teamsPart").value,
 					doubleClickMs: document.getElementById("doubleClickMs").value,
+				});
+			}
+
+			function grabTokens() {
+				setGrabRunning(true);
+				setStatus(document.getElementById("grabStatus"), "Demarrage capture Chrome…", "");
+				sendToPlugin({
+					event: "grabTokens",
+					timeout: 180,
+					port: 9222,
+					cloneProfile: false,
 				});
 			}
 
@@ -228,6 +262,9 @@
 						document.getElementById("skypeToken").value = g.skypeToken || "";
 						document.getElementById("teamsPart").value = g.teamsPart || "emea-02";
 						document.getElementById("doubleClickMs").value = g.doubleClickMs || 400;
+						if (g.authMode === "manual" && (g.graphToken || g.skypeToken)) {
+							document.getElementById("manualTokens").open = true;
+						}
 						return;
 					}
 
@@ -241,6 +278,7 @@
 
 					if (p.event === "tokenStatus" || p.event === "globalSaved") {
 						const lines = [];
+						lines.push(`Mode: ${p.authMode === "manual" ? "manuel" : "Chrome (CDP)"}`);
 						if (p.hasGraphToken) {
 							lines.push(`Recherche: ${p.backend || "?"}`);
 							if (p.graphAud) lines.push(`aud: ${p.graphAud}`);
@@ -256,6 +294,26 @@
 						}
 						if (p.teamsPart) lines.push(`TEAMS_PART=${p.teamsPart}`);
 						setStatus(document.getElementById("tokenStatus"), lines.join("\n"), p.hasGraphToken ? "ok" : "warn");
+						if (p.grabRunning) setGrabRunning(true);
+						return;
+					}
+
+					if (p.event === "grabProgress") {
+						setGrabRunning(Boolean(p.running));
+						setStatus(document.getElementById("grabStatus"), p.message || "", p.ok === false ? "warn" : "");
+						return;
+					}
+
+					if (p.event === "grabDone") {
+						setGrabRunning(false);
+						setStatus(
+							document.getElementById("grabStatus"),
+							p.ok ? p.message || "OK" : p.error || p.message || "Echec",
+							p.ok ? "ok" : "warn",
+						);
+						if (p.graphToken) document.getElementById("graphToken").value = p.graphToken;
+						if (p.skypeToken) document.getElementById("skypeToken").value = p.skypeToken;
+						sendToPlugin({ event: "getTokenStatus" });
 						return;
 					}
 
@@ -295,6 +353,22 @@
 			}
 
 			document.getElementById("saveTokens").addEventListener("click", saveTokens);
+			document.getElementById("grabTokens").addEventListener("click", grabTokens);
+			document.getElementById("cancelGrab").addEventListener("click", () => {
+				sendToPlugin({ event: "cancelGrabTokens" });
+			});
+			function savePrefs() {
+				sendToPlugin({
+					event: "saveGlobal",
+					authMode: document.getElementById("manualTokens").open ? "manual" : "chrome",
+					graphToken: document.getElementById("graphToken").value,
+					skypeToken: document.getElementById("skypeToken").value,
+					teamsPart: document.getElementById("teamsPart").value,
+					doubleClickMs: document.getElementById("doubleClickMs").value,
+				});
+			}
+			document.getElementById("teamsPart").addEventListener("change", savePrefs);
+			document.getElementById("doubleClickMs").addEventListener("change", savePrefs);
 			document.getElementById("searchBtn").addEventListener("click", () => {
 				const query = document.getElementById("query").value.trim();
 				if (!query) return;
