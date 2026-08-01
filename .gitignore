@@ -9,3 +9,11 @@ node_modules
 !.env.example
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# Teams Contact plugin — captured session tokens (secrets, ~1h)
+token.txt
+skype_token.txt
+presence_token.txt
+**/token.txt
+**/skype_token.txt
+**/presence_token.txt
