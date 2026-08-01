@@ -5,6 +5,11 @@ fn main() {
 	println!("cargo:rerun-if-changed=../plugins");
 	if let Err(error) = || -> Result<(), std::io::Error> {
 		for entry in fs::read_dir("../plugins")?.flatten() {
+			// Only build plugins that opt in with a build.ts (e.g. compiled plugins).
+			// Node/prebuilt plugins distributed separately have none and are skipped.
+			if !entry.path().is_dir() || !entry.path().join("build.ts").exists() {
+				continue;
+			}
 			let out_dir = std::path::Path::new("target").join("plugins").join(entry.file_name());
 			fs::create_dir_all(&out_dir)?;
 			let status = std::process::Command::new("deno")
