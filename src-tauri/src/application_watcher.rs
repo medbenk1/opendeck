@@ -151,7 +151,8 @@ fn active_process_name(pid: u32) -> Option<String> {
 /// PIDs of visible, titled top-level windows (Windows only).
 #[cfg(windows)]
 fn visible_window_pids() -> Vec<u32> {
-	use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM};
+	use windows_sys::core::BOOL;
+	use windows_sys::Win32::Foundation::{HWND, LPARAM};
 	use windows_sys::Win32::UI::WindowsAndMessaging::{EnumWindows, GetWindowTextLengthW, GetWindowThreadProcessId, IsWindowVisible};
 
 	unsafe extern "system" fn callback(hwnd: HWND, lparam: LPARAM) -> BOOL {
