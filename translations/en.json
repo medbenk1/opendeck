@@ -111,6 +111,7 @@
 	"profile_manager.pages.next": "Next page",
 	"profile_manager.pages.previous": "Previous page",
 	"profile_manager.profiles": "profiles",
+	"profile_manager.refresh_applications": "Refresh open apps",
 	"profile_manager.remove_application": "Remove application",
 	"profile_manager.rename": "Rename",
 	"profile_manager.rename.exists": "A profile with the ID \"{{id}}\" already exists.",

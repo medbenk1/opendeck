@@ -226,6 +226,16 @@
 		applicationProfiles = await invoke("get_application_profiles");
 	})();
 	listen("applications", ({ payload }: { payload: string[] }) => (applications = payload));
+
+	async function loadRunningApplications() {
+		try {
+			const running: string[] = await invoke("get_running_applications");
+			const merged = new Set<string>([...(applications ?? []), ...running]);
+			applications = [...merged];
+		} catch (error) {
+			console.error(error);
+		}
+	}
 	let applicationsAddAppName: string = "opendeck_select_application";
 	let applicationsAddProfile: string = "opendeck_select_profile";
 	$: {
@@ -356,7 +366,10 @@
 
 		<button
 			class="ml-2 px-4 flex items-center text-neutral-300 bg-neutral-900 hover:bg-neutral-800 transition-colors border border-neutral-600 rounded-lg"
-			on:click={() => (showApplicationManager = true)}
+			on:click={() => {
+				showApplicationManager = true;
+				loadRunningApplications();
+			}}
 			aria-label={$t("profile_manager.application_profiles")}
 		>
 			<Browsers size={24} />
@@ -419,6 +432,12 @@
 		<h2 class="text-xl font-semibold text-neutral-300">{device.name}</h2>
 		<span class="text-sm text-neutral-400">{$t("profile_manager.application_profiles.hint.1")}</span>
 		<span class="text-sm text-neutral-400">{$t("profile_manager.application_profiles.hint.2")}</span>
+		<button
+			class="mt-1 w-fit px-3 py-1 text-sm text-neutral-300 bg-neutral-900 hover:bg-neutral-800 transition-colors border border-neutral-600 rounded-lg"
+			on:click={loadRunningApplications}
+		>
+			{$t("profile_manager.refresh_applications")}
+		</button>
 	</svelte:fragment>
 
 	<table class="w-full text-neutral-300 divide-y divide-neutral-500!">

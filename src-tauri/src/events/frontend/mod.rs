@@ -106,6 +106,11 @@ pub async fn get_applications() -> Vec<String> {
 }
 
 #[command]
+pub fn get_running_applications() -> Vec<String> {
+	crate::application_watcher::running_application_names()
+}
+
+#[command]
 pub async fn get_application_profiles() -> crate::application_watcher::ApplicationProfiles {
 	crate::application_watcher::APPLICATION_PROFILES.read().await.value.clone()
 }

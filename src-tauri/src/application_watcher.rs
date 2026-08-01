@@ -28,20 +28,25 @@ pub fn init_application_watcher() {
 		let mut previous = String::new();
 		let app_handle = crate::APP_HANDLE.get().unwrap();
 		loop {
-			let app_name = if let Ok(win) = get_active_window() {
+			let (app_name, process_id) = if let Ok(win) = get_active_window() {
 				let mut applications = APPLICATIONS.write().await;
 				if !applications.contains(&win.app_name) && !win.app_name.to_lowercase().starts_with(&crate::shared::PRODUCT_NAME.to_lowercase()) && !win.app_name.trim().is_empty() {
 					applications.push(win.app_name.clone());
 					let _ = app_handle.get_webview_window("main").unwrap().emit("applications", applications.clone());
 				}
-				win.app_name
+				(win.app_name, win.process_id as u32)
 			} else {
-				String::new()
+				(String::new(), 0)
 			};
 
 			if app_name != previous {
+				// Match on the friendly window name OR the process executable name, so
+				// entries added from the running-apps list (exe names) also switch.
+				let proc_name = active_process_name(process_id);
 				let application_profiles = &APPLICATION_PROFILES.read().await.value;
-				let application = application_profiles.get(&app_name);
+				let application = application_profiles
+					.get(&app_name)
+					.or_else(|| proc_name.as_deref().and_then(|n| application_profiles.get(n)));
 				let default = application_profiles.get("opendeck_default");
 				for value in crate::shared::DEVICES.iter() {
 					let device = value.key();
@@ -130,4 +135,72 @@ pub async fn stop_monitoring(plugin: &str) {
 		plugins.retain(|p| p != plugin);
 	}
 	application_plugins.retain(|_, p| !p.is_empty());
+}
+
+/// Resolve a process's executable name from its PID (cross-platform, via sysinfo).
+fn active_process_name(pid: u32) -> Option<String> {
+	if pid == 0 {
+		return None;
+	}
+	let target = Pid::from_u32(pid);
+	let mut system = System::new_with_specifics(RefreshKind::nothing().with_processes(ProcessRefreshKind::nothing().without_tasks()));
+	system.refresh_processes_specifics(ProcessesToUpdate::Some(&[target]), true, ProcessRefreshKind::nothing().without_tasks());
+	system.process(target).map(|p| p.name().to_string_lossy().to_string())
+}
+
+/// PIDs of visible, titled top-level windows (Windows only).
+#[cfg(windows)]
+fn visible_window_pids() -> Vec<u32> {
+	use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM};
+	use windows_sys::Win32::UI::WindowsAndMessaging::{EnumWindows, GetWindowTextLengthW, GetWindowThreadProcessId, IsWindowVisible};
+
+	unsafe extern "system" fn callback(hwnd: HWND, lparam: LPARAM) -> BOOL {
+		let pids = unsafe { &mut *(lparam as *mut Vec<u32>) };
+		if unsafe { IsWindowVisible(hwnd) } != 0 && unsafe { GetWindowTextLengthW(hwnd) } > 0 {
+			let mut pid: u32 = 0;
+			unsafe { GetWindowThreadProcessId(hwnd, &mut pid) };
+			if pid != 0 && !pids.contains(&pid) {
+				pids.push(pid);
+			}
+		}
+		1
+	}
+
+	let mut pids: Vec<u32> = Vec::new();
+	unsafe { EnumWindows(Some(callback), &mut pids as *mut Vec<u32> as LPARAM) };
+	pids
+}
+
+/// Names of currently-open applications (those with a visible window).
+/// Falls back to an empty list on platforms without window enumeration.
+#[cfg(windows)]
+pub fn running_application_names() -> Vec<String> {
+	let pids: Vec<Pid> = visible_window_pids().into_iter().map(Pid::from_u32).collect();
+	if pids.is_empty() {
+		return Vec::new();
+	}
+	let mut system = System::new_with_specifics(RefreshKind::nothing().with_processes(ProcessRefreshKind::nothing().without_tasks()));
+	system.refresh_processes_specifics(ProcessesToUpdate::Some(&pids), true, ProcessRefreshKind::nothing().without_tasks());
+
+	let product = crate::shared::PRODUCT_NAME.to_lowercase();
+	let mut names: Vec<String> = Vec::new();
+	for pid in pids {
+		let Some(process) = system.process(pid) else {
+			continue;
+		};
+		let name = process.name().to_string_lossy().to_string();
+		if name.trim().is_empty() || name.to_lowercase().starts_with(&product) {
+			continue;
+		}
+		if !names.contains(&name) {
+			names.push(name);
+		}
+	}
+	names.sort_by_key(|n| n.to_lowercase());
+	names
+}
+
+#[cfg(not(windows))]
+pub fn running_application_names() -> Vec<String> {
+	Vec::new()
 }
